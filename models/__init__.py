@@ -1,8 +1,16 @@
 """RAPD-Net model definitions."""
 
+from .frequency_decomposition import (
+    Stage2SymmetricFrequencyNet,
+    SymmetricFrequencyReliabilityScreen,
+)
 from .stage1_spectral_basis import Stage1SpectralBasisNet
 from .stage1_unmixing import Stage1UnmixingNet
 from .stage2_coefficient_residual import Stage2CoefficientResidualNet
+from .stage2_dswin_detail_routing import (
+    DSwinCrossModalDetailRouter,
+    Stage2DSwinDetailRoutingNet,
+)
 from .stage2_dual_space import Stage2DualSpaceNet
 from .stage2_frequency_reliability import (
     ChannelWiseSpectralSplitter,
@@ -13,10 +21,6 @@ from .stage2_frequency_reliability import (
 from .stage2_multiscale_pyramid import Stage2MultiScalePyramidNet
 from .stage2_physical_fusion import Stage2PhysicalFusionNet
 from .stage2_srf_anchor import Stage2SRFAnchorNet
-from .stage2_symmetric_frequency import (
-    Stage2SymmetricFrequencyNet,
-    SymmetricFrequencyReliabilityScreen,
-)
 from .stage3_ablation_mask_curriculum import MaskCurriculumAblationRefiner
 from .stage3_direct_x0_ablation import (
     DirectX0ResidualHead,
@@ -32,13 +36,6 @@ from .stage3_uncertainty_guided_diffusion import (
     LocalConditionalNoiseDenoiser,
     UncertaintyGuidedDualDomainDiffusionRefiner,
 )
-from .stage3_uncertainty_guided_diffusion_v2 import (
-    LocalConditionalHybridDenoiser,
-    UncertaintyGuidedDualDomainDiffusionRefinerV2,
-)
-from .stage3_uncertainty_guided_diffusion_v2_stable import (
-    UncertaintyGuidedDualDomainDiffusionRefinerV2Stable,
-)
 
 __all__ = [
     "Stage1SpectralBasisNet",
@@ -48,6 +45,8 @@ __all__ = [
     "Stage2DualSpaceNet",
     "Stage2SymmetricFrequencyNet",
     "Stage2MultiScalePyramidNet",
+    "Stage2DSwinDetailRoutingNet",
+    "DSwinCrossModalDetailRouter",
     "BasisOrthogonalResidualDiffusionRefiner",
     "ConditionalResidualDenoiser",
     "GaussianDiffusionSchedule",
@@ -57,9 +56,6 @@ __all__ = [
     "MaskCurriculumAblationRefiner",
     "DirectX0ResidualHead",
     "DirectX0Stage3AblationRefiner",
-    "UncertaintyGuidedDualDomainDiffusionRefinerV2",
-    "UncertaintyGuidedDualDomainDiffusionRefinerV2Stable",
-    "LocalConditionalHybridDenoiser",
     "SharedMSIFeatureEncoder",
     "ChannelWiseSpectralSplitter",
     "NoiseSplitter",
