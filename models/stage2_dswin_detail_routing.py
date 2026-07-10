@@ -6,22 +6,13 @@ It keeps the existing Stage-2 chain intact:
     Stage-1 spectral basis -> SRF analytical anchor -> observable/null heads
     -> residual-of-residual multiscale pyramid.
 
-Only the high-frequency detail branch is changed. Instead of using
+The key change is that DSwin routing uses the raw symmetric high-frequency
+cross-source difference, not the old NSP-filtered high-frequency tensor:
 
-    reliable_high = Q * Delta F^H
+    routed_high = DSwin(C_anchor, Delta F^L, Delta F^M, Delta F^H)
 
-from Sobel/NSP as the only high-frequency detail, a lightweight token-centric
-sliding-window router lets each coefficient token sample MSI frequency-difference
-features from a content-adaptive local window.
-
-The router is initialized as an identity replacement:
-
-    routed_high = high_difference
-    route_confidence = old_reliability_map
-
-so a pretrained multiscale Stage-2 checkpoint can be loaded without changing its
-initial output. The deformable residual path then learns extra routing during
-fine-tuning.
+The router is zero-initialized as an identity replacement, so a pretrained
+multiscale Stage-2 checkpoint can be loaded without changing the initial output.
 """
 
 from __future__ import annotations
@@ -225,27 +216,27 @@ class Stage2DSwinDetailRoutingNet(Stage2MultiScalePyramidNet):
             hidden_channels=dswin_hidden_channels,
         )
 
-    def _predict_normalized_residual(
+    def _route_and_predict(
         self,
-        normalized_upsampled_coefficients: torch.Tensor,
+        normalized_coefficients: torch.Tensor,
         physical_feature: torch.Tensor,
-        low_discrepancy_feature: torch.Tensor,
-        mid_feature: torch.Tensor,
-        reliable_high_feature: torch.Tensor,
+        low_difference: torch.Tensor,
+        mid_difference: torch.Tensor,
+        high_difference: torch.Tensor,
         reliability_map: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
         route = self.detail_router(
-            normalized_coefficients=normalized_upsampled_coefficients,
-            low_difference=low_discrepancy_feature,
-            mid_difference=mid_feature,
-            high_difference=reliable_high_feature,
+            normalized_coefficients=normalized_coefficients,
+            low_difference=low_difference,
+            mid_difference=mid_difference,
+            high_difference=high_difference,
             reliability_map=reliability_map,
         )
         output = super()._predict_normalized_residual(
-            normalized_upsampled_coefficients=normalized_upsampled_coefficients,
+            normalized_upsampled_coefficients=normalized_coefficients,
             physical_feature=physical_feature,
-            low_discrepancy_feature=low_discrepancy_feature,
-            mid_feature=mid_feature,
+            low_discrepancy_feature=low_difference,
+            mid_feature=mid_difference,
             reliable_high_feature=route["dswin_routed_high_feature"],
             reliability_map=route["dswin_route_confidence_map"],
         )
@@ -256,4 +247,153 @@ class Stage2DSwinDetailRoutingNet(Stage2MultiScalePyramidNet):
         output["reliability_map_after_routing"] = route[
             "dswin_route_confidence_map"
         ]
+        return output
+
+    def _predict_normalized_residual(
+        self,
+        normalized_upsampled_coefficients: torch.Tensor,
+        physical_feature: torch.Tensor,
+        low_discrepancy_feature: torch.Tensor,
+        mid_feature: torch.Tensor,
+        reliable_high_feature: torch.Tensor,
+        reliability_map: torch.Tensor,
+    ) -> Dict[str, torch.Tensor]:
+        # Fallback path used by inherited zero-MSI utilities. The argument name
+        # is kept for compatibility, but the tensor is interpreted as the current
+        # high-frequency difference candidate.
+        return self._route_and_predict(
+            normalized_coefficients=normalized_upsampled_coefficients,
+            physical_feature=physical_feature,
+            low_difference=low_discrepancy_feature,
+            mid_difference=mid_feature,
+            high_difference=reliable_high_feature,
+            reliability_map=reliability_map,
+        )
+
+    def forward(
+        self,
+        lr_hsi: torch.Tensor,
+        hr_msi: torch.Tensor,
+        compute_zero_msi: bool = False,
+    ) -> Dict[str, torch.Tensor]:
+        if lr_hsi.ndim != 4 or lr_hsi.size(1) != self.n_bands:
+            raise ValueError(
+                f"Expected LR-HSI [N, {self.n_bands}, h, w], got "
+                f"{tuple(lr_hsi.shape)}"
+            )
+        if hr_msi.ndim != 4 or hr_msi.size(1) != self.msi_channels:
+            raise ValueError(
+                f"Expected HR-MSI [N, {self.msi_channels}, H, W], "
+                f"got {tuple(hr_msi.shape)}"
+            )
+
+        with torch.no_grad():
+            basis = self.stage1.get_basis().detach()
+            mean_spectrum = self.stage1.mean_spectrum.detach()
+            lr_coefficients = self.stage1.encode(lr_hsi, basis=basis).detach()
+            lr_reconstruction = self.stage1.decode(
+                lr_coefficients,
+                basis=basis,
+            ).detach()
+
+        target_size = hr_msi.shape[-2:]
+        bicubic_coefficients = F.interpolate(
+            lr_coefficients,
+            size=target_size,
+            mode="bicubic",
+            align_corners=False,
+        )
+        scale = self.coefficient_scale().view(1, -1, 1, 1)
+        normalized_bicubic = bicubic_coefficients / scale
+        base_hsi = self.stage1.decode(bicubic_coefficients, basis=basis)
+        base_msi = self.project_hsi_to_msi(base_hsi)
+        msi_residual = hr_msi - base_msi
+
+        anchor = self.analytical_coefficient_anchor(msi_residual)
+        anchor_coefficients = (
+            bicubic_coefficients + anchor["analytic_coefficient_residual"]
+        )
+        normalized_anchor = anchor_coefficients / scale
+        anchor_hsi = self.stage1.decode(anchor_coefficients, basis=basis)
+        anchor_msi = self.project_hsi_to_msi(anchor_hsi)
+
+        reliability = self.reliability(base_msi, hr_msi)
+        low_difference = reliability.get(
+            "low_difference_feature",
+            reliability["low_feature"] - reliability["physical_feature"],
+        )
+        high_difference = reliability.get(
+            "high_difference_feature",
+            reliability["reliable_high_feature"],
+        )
+        correction = self._route_and_predict(
+            normalized_coefficients=normalized_anchor,
+            physical_feature=reliability["physical_feature"],
+            low_difference=low_difference,
+            mid_difference=reliability["mid_feature"],
+            high_difference=high_difference,
+            reliability_map=reliability["reliability_map"],
+        )
+
+        corrected_coefficients = anchor_coefficients + correction[
+            "coefficient_residual"
+        ]
+        reconstructed_hsi = self.stage1.decode(corrected_coefficients, basis=basis)
+        projected_msi = self.project_hsi_to_msi(reconstructed_hsi)
+
+        output = {
+            "basis": basis,
+            "mean_spectrum": mean_spectrum,
+            "coefficient_scale": self.coefficient_scale(),
+            "lr_coefficients": lr_coefficients,
+            "lr_reconstruction": lr_reconstruction,
+            "bicubic_coefficients": bicubic_coefficients,
+            "upsampled_coefficients": anchor_coefficients,
+            "normalized_bicubic_coefficients": normalized_bicubic,
+            "normalized_upsampled_coefficients": normalized_anchor,
+            "anchor_coefficients": anchor_coefficients,
+            "base_hsi": base_hsi,
+            "anchor_hsi": anchor_hsi,
+            "base_msi": base_msi,
+            "anchor_msi": anchor_msi,
+            "msi_residual": msi_residual,
+            "low_discrepancy_feature": low_difference,
+            "corrected_coefficients": corrected_coefficients,
+            "reconstructed_hsi": reconstructed_hsi,
+            "projected_msi": projected_msi,
+            "actual_anchor_ridge": self.actual_anchor_ridge,
+            **anchor,
+            **reliability,
+            **correction,
+        }
+
+        if compute_zero_msi:
+            zero_feature = torch.zeros_like(reliability["mid_feature"])
+            zero_map = torch.zeros_like(reliability["reliability_map"])
+            zero_correction = self._route_and_predict(
+                normalized_coefficients=normalized_bicubic,
+                physical_feature=reliability["physical_feature"],
+                low_difference=zero_feature,
+                mid_difference=zero_feature,
+                high_difference=zero_feature,
+                reliability_map=zero_map,
+            )
+            zero_coefficients = bicubic_coefficients + zero_correction[
+                "coefficient_residual"
+            ]
+            zero_hsi = self.stage1.decode(zero_coefficients, basis=basis)
+            output.update(
+                {
+                    "zero_msi_normalized_coefficient_residual": zero_correction[
+                        "normalized_coefficient_residual"
+                    ],
+                    "zero_msi_coefficient_residual": zero_correction[
+                        "coefficient_residual"
+                    ],
+                    "zero_msi_coefficients": zero_coefficients,
+                    "zero_msi_hsi": zero_hsi,
+                    "zero_msi_projected_msi": self.project_hsi_to_msi(zero_hsi),
+                }
+            )
+
         return output
