@@ -19,7 +19,6 @@ from .stage2_frequency_reliability import (
     SharedMSIFeatureEncoder,
 )
 from .stage2_multiscale_pyramid import Stage2MultiScalePyramidNet
-from .stage2_physical_fusion import Stage2PhysicalFusionNet
 from .stage2_srf_anchor import Stage2SRFAnchorNet
 from .stage3_uncertainty_guided_diffusion import (
     DeterministicUncertaintyPredictor,
@@ -45,5 +44,4 @@ __all__ = [
     "NoiseSplitter",
     "FrequencyReliabilityScreen",
     "SymmetricFrequencyReliabilityScreen",
-    "Stage2PhysicalFusionNet",
 ]
