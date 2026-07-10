@@ -10,22 +10,23 @@ Only the high-frequency detail branch is changed. Instead of using
 
     reliable_high = Q * Delta F^H
 
-from Sobel/NSP as the only high-frequency detail, a lightweight
-token-centric deformable sliding-window router lets each coefficient token
-sample MSI frequency-difference features from a content-adaptive local window.
+from Sobel/NSP as the only high-frequency detail, a lightweight token-centric
+sliding-window router lets each coefficient token sample MSI frequency-difference
+features from a content-adaptive local window.
 
 The router is initialized as an identity replacement:
 
     routed_high = high_difference
     route_confidence = old_reliability_map
 
-so a pretrained multiscale Stage-2 checkpoint can be loaded without changing
-its initial output. The new deformable residual path then learns extra routing
-during fine-tuning.
+so a pretrained multiscale Stage-2 checkpoint can be loaded without changing its
+initial output. The deformable residual path then learns extra routing during
+fine-tuning.
 """
 
 from __future__ import annotations
 
+import math
 from typing import Dict
 
 import torch
@@ -120,7 +121,7 @@ class DSwinCrossModalDetailRouter(nn.Module):
         values: torch.Tensor,
         offsets: torch.Tensor,
     ) -> torch.Tensor:
-        batch, channels, height, width = values.shape
+        _, _, height, width = values.shape
         base_grid = self._base_grid(height, width, values.device, values.dtype)
         base_offsets = self.base_offsets.to(device=values.device, dtype=values.dtype)
         x_scale = 2.0 / max(width - 1, 1)
@@ -188,7 +189,7 @@ class DSwinCrossModalDetailRouter(nn.Module):
         )
 
         entropy = -(attention * attention.clamp_min(1e-8).log()).sum(dim=1)
-        entropy = entropy / float(torch.log(values.new_tensor(self.num_samples)))
+        entropy = entropy / math.log(float(self.num_samples))
         return {
             "dswin_query_feature": query,
             "dswin_detail_feature": detail,
