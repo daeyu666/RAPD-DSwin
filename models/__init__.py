@@ -1,4 +1,4 @@
-"""RAPD-Net model definitions."""
+"""RAPD-DSwin model definitions."""
 
 from .frequency_decomposition import (
     Stage2SymmetricFrequencyNet,
@@ -21,16 +21,6 @@ from .stage2_frequency_reliability import (
 from .stage2_multiscale_pyramid import Stage2MultiScalePyramidNet
 from .stage2_physical_fusion import Stage2PhysicalFusionNet
 from .stage2_srf_anchor import Stage2SRFAnchorNet
-from .stage3_ablation_mask_curriculum import MaskCurriculumAblationRefiner
-from .stage3_direct_x0_ablation import (
-    DirectX0ResidualHead,
-    DirectX0Stage3AblationRefiner,
-)
-from .stage3_dual_domain_diffusion import (
-    BasisOrthogonalResidualDiffusionRefiner,
-    ConditionalResidualDenoiser,
-    GaussianDiffusionSchedule,
-)
 from .stage3_uncertainty_guided_diffusion import (
     DeterministicUncertaintyPredictor,
     LocalConditionalNoiseDenoiser,
@@ -47,15 +37,9 @@ __all__ = [
     "Stage2MultiScalePyramidNet",
     "Stage2DSwinDetailRoutingNet",
     "DSwinCrossModalDetailRouter",
-    "BasisOrthogonalResidualDiffusionRefiner",
-    "ConditionalResidualDenoiser",
-    "GaussianDiffusionSchedule",
     "UncertaintyGuidedDualDomainDiffusionRefiner",
     "DeterministicUncertaintyPredictor",
     "LocalConditionalNoiseDenoiser",
-    "MaskCurriculumAblationRefiner",
-    "DirectX0ResidualHead",
-    "DirectX0Stage3AblationRefiner",
     "SharedMSIFeatureEncoder",
     "ChannelWiseSpectralSplitter",
     "NoiseSplitter",
