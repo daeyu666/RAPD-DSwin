@@ -13,8 +13,10 @@ matches the source checkpoint before fine-tuning.
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
+from dataclasses import dataclass
 
 import torch
 
@@ -22,8 +24,34 @@ import train_stage2_multiscale_pyramid as base
 from models.stage2_dswin_detail_routing import Stage2DSwinDetailRoutingNet
 
 
+@dataclass(frozen=True)
+class DSwinRoutingConfig:
+    window_size: int = 3
+    offset_scale: float = 1.0
+    hidden_channels: int | None = None
+
+
 def _has_option(arguments: list[str], option: str) -> bool:
     return any(item == option or item.startswith(option + "=") for item in arguments)
+
+
+def _extract_dswin_arguments() -> DSwinRoutingConfig:
+    """Parse DSwin-only arguments and remove them before base.parse_args.
+
+    The reused multiscale training parser does not know DSwin-specific options.
+    Leaving them in ``sys.argv`` causes an ``unrecognized arguments`` failure.
+    """
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--dswin_window_size", type=int, default=3)
+    parser.add_argument("--dswin_offset_scale", type=float, default=1.0)
+    parser.add_argument("--dswin_hidden_channels", type=int, default=None)
+    parsed, remaining = parser.parse_known_args(sys.argv[1:])
+    sys.argv = [sys.argv[0], *remaining]
+    return DSwinRoutingConfig(
+        window_size=parsed.dswin_window_size,
+        offset_scale=parsed.dswin_offset_scale,
+        hidden_channels=parsed.dswin_hidden_channels,
+    )
 
 
 def _inject_default_arguments() -> None:
@@ -39,8 +67,6 @@ def _inject_default_arguments() -> None:
         "--pyramid_new_lr": "2e-5",
         "--pyramid_source_lr": "5e-7",
         "--pyramid_warmup_epochs": "5",
-        "--dswin_window_size": "3",
-        "--dswin_offset_scale": "1.0",
     }
     injected: list[str] = []
     for option, value in defaults.items():
@@ -93,8 +119,21 @@ def load_dswin_warm_start(
 
 
 def main() -> None:
+    dswin_config = _extract_dswin_arguments()
     _inject_default_arguments()
-    base.Stage2MultiScalePyramidNet = Stage2DSwinDetailRoutingNet
+
+    class ConfiguredStage2DSwinDetailRoutingNet(Stage2DSwinDetailRoutingNet):
+        def __init__(self, *args, **kwargs):
+            super().__init__(
+                *args,
+                dswin_window_size=dswin_config.window_size,
+                dswin_offset_scale=dswin_config.offset_scale,
+                dswin_hidden_channels=dswin_config.hidden_channels,
+                **kwargs,
+            )
+
+    ConfiguredStage2DSwinDetailRoutingNet.__name__ = "ConfiguredStage2DSwinDetailRoutingNet"
+    base.Stage2MultiScalePyramidNet = ConfiguredStage2DSwinDetailRoutingNet
     base.load_symmetric_warm_start = load_dswin_warm_start
     base.main()
 
